@@ -1,0 +1,3 @@
+ts_utc,recorded_at,type,instrument,payload
+2026-10-23T17:20:43Z,1792776043.147,state,ES 12-26,"{""type"": ""state"", ""instrument"": ""ES 12-26"", ""ts"": ""2026-10-23T15:42:11.250Z"", ""tf"": {""240"": {""nds_state"": ""flag_pos"", ""hook"": ""B"", ""points"": {""1"": 5800.0, ""2"": 5840.0, ""3"": 5801.5}, ""level86"": 5805.6, ""level86_broken"": false, ""close"": 5832.25}}}"
+2026-10-23T17:20:43Z,1792776043.147,decision,,"{""type"": ""decision"", ""action"": ""LONG"", ""confidence"": 0.6, ""gate"": ""warn"", ""reasons"": [""tf240=0.60""], ""engine"": ""fuzzy-v1""}"

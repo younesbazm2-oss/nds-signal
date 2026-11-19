@@ -1,0 +1,21 @@
+# تنظیمات موتور تصمیم NDS (فاز 1)
+
+server:
+  host: 127.0.0.1
+  port: 46320
+
+# مدل تصمیم:
+#   fuzzy-v1  → گیت فازی (فاز 1)
+#   laya/kev  → مدل تصمیم (فاز 6؛ نیازمند سرور لوکال)
+model: fuzzy-v1
+# model_endpoint: http://127.0.0.1:8080/v1/decide
+
+journal:
+  path: journal/journal.csv
+
+thresholds:
+  execute: 0.85   # بالاتر از این: سیگنال کامل روی چارت
+  warn: 0.60      # بین warn و execute: هشدار
+                  # پایین‌تر از warn: فقط لاگ
+
+debug: false
