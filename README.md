@@ -1,4 +1,4 @@
-[README.md](https://github.com/user-attachments/files/35210870/README.md)
+
 # NDS Signal System
 
 A personal research project that implements the **NDS structure method** for futures charts: automatic swing-node detection, 1-2-3 sequence numbering on two axes (X and Y), hook classification (A / B+ / B-), and a Python decision engine that combines per-timeframe bias into a fuzzy LONG / SHORT / NONE output.
