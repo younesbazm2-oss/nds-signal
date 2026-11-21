@@ -1,92 +1,91 @@
-# سیستم سیگنال NDS
+[README.md](https://github.com/user-attachments/files/35210870/README.md)
+# NDS Signal System
 
-وضعیت: **فاز 0 + 1 + 2 تکمیل شد** — اسکلت پروژه + اندیکاتور پایه + ساختار کامل NDS
-(نودها، کانت ۱-۲-۳، هوک A/B، فلگ، سطح ۸۶٪، تقارن) با تنظیمات و رنگ‌بندی کامل
+A personal research project that implements the **NDS structure method** for futures charts: automatic swing-node detection, 1-2-3 sequence numbering on two axes (X and Y), hook classification (A / B+ / B-), and a Python decision engine that combines per-timeframe bias into a fuzzy LONG / SHORT / NONE output.
 
-پلن کامل پروژه: `../پلن-برنامه-نویسی-NDS.md`
+> Status: active development. The chart structure layer (nodes, numbering, hooks) is implemented and being refined against hand-drawn reference charts. The decision engine is a skeleton: it currently averages per-timeframe bias values and does not yet consume the indicator's hook structure.
 
 ---
 
-## ساختار پروژه
+## How it works
+
+### 1. Nodes first
+
+Everything is derived from swing **nodes** (peaks and troughs):
+
+- **Heikin-Ashi mode** (default): a node is the extreme wick of a Heikin-Ashi colour run, confirmed by the first opposite-colour candle. `SwingStrength` is the minimum run length in bars.
+- **Fractal mode**: a node is a centre bar more extreme than `SwingStrength` bars on each side, then confirmed by opposite Heikin-Ashi candle(s).
+
+Candidates are filtered for minimum bar spacing, equal double tops/bottoms within a tick tolerance, and strict peak/trough alternation.
+
+### 2. Numbering (X / Y axes)
+
+Nodes are numbered **before** any hook exists:
+
+- Each side (highs, lows) is counted in **1-2-3 sequences**. A node that advances past the previous same-side node takes the next number; a node that does not advance starts a new sequence at 1.
+- An unfinished sequence stays open: a later node advancing past its 2 becomes that sequence's 3. A cycle ends only when its 3 forms.
+- **Colour:** a forming sequence is white (X axis). Nodes turn yellow (Y axis) only when node 3 forms — the whole 1-2-3 turns yellow together.
+
+### 3. Hooks
+
+Hooks are derived from the numbered nodes:
+
+- **Direction:** positive (impulse = highs) or negative (impulse = lows).
+- **Kind:** `A` when the impulse side completes 1-2-3; `B+` / `B-` when the impulse side stalls at 2 (the counter side completes 3 first).
+- **Chains:** H1 → H2 → R1, R2, … (a closing hook spawns the next one at its closing node).
+- **BIG:** an H1+H2 pair where H2 fails at its own start without breaking H1's start.
+- **86.4% level:** drawn as a symmetry guide/target. It is **diagnostic only** — hook validity is decided by node-3 formation, not by the level.
+
+### 4. Decision engine (Python)
+
+- `run_engine.py` starts a local TCP server (JSON Lines) on `127.0.0.1:46320`.
+- The indicator can stream state to it; the engine replies with a typed decision and journals everything to `journal/journal.csv`.
+- Current model `fuzzy-v1`: weighted average of per-timeframe bias values with confidence thresholds (`config/fuzzy.yaml`). Planned: calibration on the journal, then a model adapter for external models.
+
+---
+
+## Project layout
 
 ```
 nds-signal/
 ├── indicator/
-│   └── NDSStructure.cs        ← اندیکاتور نینجا (فاز 1)
-├── run_engine.py              ← راه‌انداز موتور
-│   ├── engine/                    ← موتور تصمیم (Python)
-│   ├── main.py                ← منطق اصلی موتور
-│   ├── server.py              ← سرور TCP لوکال (JSON Line)
-│   ├── protocol.py            ← اعتبارسنجی پیام‌ها
-│   ├── gate.py                ← گیت فازی v1
-│   ├── model_adapter.py       ← انتخاب مدل (فازی حالا؛ Laya/Kev در فاز 6)
-│   └── journal.py             ← ژورنال CSV
+│   └── NDSStructure.cs     ← NinjaTrader 8 indicator (C#)
+├── run_engine.py           ← engine launcher
+├── engine/                 ← decision engine (Python)
+│   ├── main.py             ← engine entry point
+│   ├── server.py           ← local TCP server (JSON Lines)
+│   ├── protocol.py         ← message validation
+│   ├── gate.py             ← fuzzy gate v1
+│   ├── model_adapter.py    ← model selection
+│   └── journal.py          ← CSV journal
 ├── config/
-│   ├── engine.yaml            ← پورت، آستانه‌ها، مدل، مسیر ژورنال
-│   └── fuzzy.yaml             ← نگاشت وضعیت NDS به bias + وزن تایم‌فریم‌ها
-├── tests/                     ← تست‌های خودکار (unittest)
-└── journal/                   ← خروجی ژورنال (خودکار ساخته می‌شود)
+│   ├── engine.yaml         ← port, thresholds, model, journal path
+│   └── fuzzy.yaml          ← state→bias mapping, timeframe weights
+├── tests/                  ← automated tests (unittest)
+└── journal/                ← journal output (created automatically)
 ```
 
 ---
 
-## نصب اندیکاتور در NinjaTrader 8.1
+## Install the indicator (NinjaTrader 8.1)
 
-1. فایل `indicator/NDSStructure.cs` را در این پوشه کپی کن:
+1. Copy `indicator/NDSStructure.cs` to
    `Documents\NinjaTrader 8\bin\Custom\Indicators\`
-2. در نینجا: `New > NinjaScript Editor` → فایل `NDSStructure` را باز کن → **F5** (Compile).
-3. روی چارت: راست‌کلیک → `Indicators` → **NDSStructure** را اضافه کن.
+2. In NinjaTrader: `New > NinjaScript Editor` → open `NDSStructure` → **F5** (Compile).
+3. On a chart: right-click → `Indicators` → add **NDSStructure**.
 
-### تنظیمات اندیکاتور (همه از پنجره Properties)
+All options (node sensitivity, colours, labels, levels, engine connection) live in the indicator's Properties window and can be saved as templates.
 
-| گروه | تنظیمات |
-|------|---------|
-| 00) عمومی | حساسیت نود (SwingStrength)، بازه رسم، حالت اشکال‌زدایی |
-| 01) نودها | نمایش/مخفی، **رنگ نود سقف**، **رنگ نود کف**، شکل علامت (نقطه/مثلث/لوزی)، خط اتصال نودها با رنگ/ضخامت/استایل |
-| 02) هوک و سکانس | نمایش شماره‌های ۱-۲-۳ با رنگ و اندازه فونت، برچسب هوک (H:A/B) با رنگ، تلورانس دوکف/دوقله همان‌اندازه |
-| 03) فلگ | نمایش کادر فلگ با رنگ خط/پرکردن/شفافیت، حداکثر عمر فلگ |
-| 04) سطح ۸۶ درصد | نمایش، درصد ریتریس سایکل (پیش‌فرض ۸۶)، **رنگ سطح سالم**، **رنگ سطح شکسته**، ضخامت |
-| 05) تقارن | نمایش خط تقارن، تلورانس تقارن، رنگ خط، رنگ تقارن تاییدشده |
-| 09) اتصال به موتور | روشن/خاموش (پیش‌فرض خاموش)، Host/Port، فاصله heartbeat |
-
-قالب تنظیمات را می‌توانی ذخیره کنی (پایین پنجره Properties → Templates) تا رنگ‌بندی موردعلاقه‌ات همیشه آماده باشد.
-
-### منطق پیاده‌شده در فاز ۲ (نیازمند بازبینی روی چارت)
-
-- **کانت ۱-۲-۳:** سه نود آخر ⇒ کانت آپ (کف، سقف، کف بالاتر) یا کانت دان (سقف، کف، سقف پایین‌تر).
-- **هوک A/B:** اگر نقطه ۳ در تلورانس تعیین‌شده هم‌سطح نقطه ۱ باشد ⇒ نوع **B** (دوقله/دوکف هم‌اندازه)، وگرنه **A**.
-- **فلگ:** طبق اسلایدهای NDS2024، شکست نقطه ۳ خلاف جهت کانت ⇒ فلگ؛ جهت روند اصلی همان سمت شکست است (شکست بالای ۳ در کانت دان ⇒ فلگ مثبت).
-- **سطح ۸۶٪:** روی لگ ۱→۲ سایکل؛ رنگ سبز = سالم، قرمز = شکسته.
-- **تقارن:** دامنه اصلاح قبلی از نقطه ۲ پروجکت می‌شود؛ برخورد نقطه ۳ در تلورانس ⇒ خط تقارن سبز می‌شود.
-
-این عناوین تفسیر اولیه از اسناد NDS هستند؛ در بازبینی چشمی روی چند چارت با هم تنظیم می‌شوند (تلورانس‌ها و حساسیت نود پارامتری هستند و بدون تغییر کد اصلاح می‌شوند).
-
-### نکات عملکرد (سبک ماندن)
-
-- محاسبات فقط **OnBarClose** است (نه هر تیک).
-- فقط نودهای `بازه رسم` کندل اخیر رسم می‌شوند (پیش‌فرض 1500).
-- پیوت‌یابی O(کم) در هر کندل؛ حافظه نودها سقف 512.
-- اتصال به موتور فقط ارسال است و هرگز UI را بلاک نمی‌کند؛ اگر موتور در دسترس نباشد بعد از تلاش‌های ناموفق بی‌صدا خاموش می‌شود.
-- نود پس از تایید رسم می‌شود: `SwingStrength` کندل بعد از نقطه برگشت (ذاتی پیوت‌یابی قابل‌اعتماد).
-
----
-
-## اجرای موتور تصمیم (اختیاری در فاز 1)
+### Run the decision engine (optional)
 
 ```powershell
 cd nds-signal
 python run_engine.py
 ```
 
-> نکته: اگر با `python -m engine.main` خطای ModuleNotFoundError گرفتی، طبیعی است —
-> برخی بیلدهای پایتون با safe-path اجرا می‌شوند و پوشه جاری را به sys.path اضافه نمی‌کنند.
-> راه‌انداز `run_engine.py` خودش مسیر پروژه را اضافه می‌کند.
+Then enable the engine connection group in the indicator settings so state is streamed to it.
 
-- پیش‌فرض روی `127.0.0.1:46320` گوش می‌دهد؛ مدل فعلی `fuzzy-v1` است.
-- هر state که برسد، تصمیم تایپ‌شده برمی‌گرداند و همه‌چیز در `journal/journal.csv` ثبت می‌شود.
-- در تنظیمات اندیکاتور، گروه `09) اتصال به موتور` را روشن کن تا state ارسال شود.
-
-### تست خودکار
+### Run the tests
 
 ```powershell
 cd nds-signal
@@ -95,13 +94,17 @@ python -m unittest discover -s tests -t . -v
 
 ---
 
-## نقشه ادامه (طبق پلن)
+## Roadmap
 
-- ~~فاز 2: هوک A/B + شماره‌گذاری ۱-۲-۳ + فلگ + سطح ۸۶٪ + تقارن~~ ✅
-- فاز 3: دلتا/CVD/ولیوم پروفایل + دریافت تصمیم و رسم فلش سیگنال
-- فاز 5: کالیبراسیون درصدها روی ژورنال
-- فاز 6: اتصال Laya/Kev (سرور HTTP لوکال) از طریق `model_adapter`
+- [x] Project skeleton + base indicator
+- [x] Full NDS structure: nodes, 1-2-3 numbering, hooks A/B, 86.4% level, symmetry
+- [ ] Delta / CVD / volume profile + signal arrow from engine decisions
+- [ ] Calibration of thresholds on the journal
+- [ ] External model connection via `model_adapter`
 
-## پشتیبانی از نسخه
+---
 
-کد برای **NinjaTrader 8.1 (آخرین نسخه، .NET 4.8)** نوشته شده. اگر پیام‌های فارسی در پنجره تنظیمات ناخوانا بود، فایل را با انکودینگ UTF-8 with BOM ذخیره کن (فایل موجود همین الان BOM دارد).
+## Notes
+
+- Built for **NinjaTrader 8.1 (.NET 4.8)**. Calculations run **OnBarClose**.
+- This is a personal research and learning project. Nothing here is financial advice.
