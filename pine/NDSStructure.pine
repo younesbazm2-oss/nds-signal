@@ -1,0 +1,326 @@
+//@version=6
+// NDS Structure — nodes first, 1-2-3 numbering on X/Y axes.
+// Rules (2026-11-21):
+//  - Node = extreme wick of a Heikin-Ashi colour run, confirmed by 1 opposite HA candle.
+//  - Each side (highs=N, lows=S) counted in overlapping 1-2-3 sequences: a node that
+//    advances past a sequence's last node joins it as the next number (a node may join
+//    several sequences at once, one label per membership); a node advancing no open
+//    sequence starts a new one at 1. A sequence ends only at its 3.
+//  - The first node after a sequence completes also starts a new sequence at 1
+//    (in addition to any joins); its 1 label sits nearest the candle, older
+//    sequences' labels above it.
+//  - Colour: labels white while forming; when a sequence completes, its 1-2-3 turn
+//    yellow, except nodes formed inside a completed opposite-side sequence
+//    (between its 1 and 3) which stay white.
+indicator("NDS Structure", overlay=true, max_labels_count=500)
+
+swingStrength = input.int(7, "Swing Strength (min HA run length)", minval=1)
+haConfirm     = input.int(1, "HA Confirm Bars", minval=1)
+tolTicks      = input.int(1, "Tolerance (ticks)", minval=0)
+showDots      = input.bool(true, "Show node dots")
+
+tol = tolTicks * syminfo.mintick
+
+// Heikin-Ashi computed manually from OHLC (request.security heikinashi can return na)
+haC = (open + high + low + close) / 4
+var float haO = na
+haO := na(haO[1]) ? (open + close) / 2 : (haO[1] + haC[1]) / 2
+
+haDir = haC > haO ? 1 : haC < haO ? -1 : 0
+atrVal = ta.atr(14)
+
+// --- run tracking -----------------------------------------------------------
+var int runDir = 0
+var int runStartBar = 0
+var int oppCount = 0
+
+// node storage
+var array<int>   nodeBars   = array.new<int>()
+var array<float> nodePrices = array.new<float>()
+var array<bool>  nodeIsHigh = array.new<bool>()
+var array<int>   nodeLblCnt = array.new<int>()
+var array<bool>  nodeCompleted = array.new<bool>()
+
+// label records (one per sequence membership)
+var array<label> Lref    = array.new<label>()
+var array<int>   Lbar    = array.new<int>()
+var array<int>   Lnode   = array.new<int>()
+var array<bool>  Lhigh   = array.new<bool>()
+var array<bool>  Lyellow = array.new<bool>()
+var array<int>   Loff    = array.new<int>()
+
+// sequences per side (flat parallel arrays; Pine has no arrays of arrays)
+// for each sequence: count, last price, member node indexes, member label-record indexes
+var array<int>   seqCntH = array.new<int>()
+var array<float> seqPxH  = array.new<float>()
+var array<int>   seqN1H  = array.new<int>()
+var array<int>   seqN2H  = array.new<int>()
+var array<int>   seqN3H  = array.new<int>()
+var array<int>   seqL1H  = array.new<int>()
+var array<int>   seqL2H  = array.new<int>()
+var array<int>   seqL3H  = array.new<int>()
+var array<int>   seqCntL = array.new<int>()
+var array<float> seqPxL  = array.new<float>()
+var array<int>   seqN1L  = array.new<int>()
+var array<int>   seqN2L  = array.new<int>()
+var array<int>   seqN3L  = array.new<int>()
+var array<int>   seqL1L  = array.new<int>()
+var array<int>   seqL2L  = array.new<int>()
+var array<int>   seqL3L  = array.new<int>()
+
+// completed sequence spans per side (bar of node1 .. bar of node3)
+var array<int> spanStartH = array.new<int>()
+var array<int> spanEndH   = array.new<int>()
+var array<int> spanStartL = array.new<int>()
+var array<int> spanEndL   = array.new<int>()
+
+f_insideOppSpan(bool isHigh, int b) =>
+    starts = isHigh ? spanStartL : spanStartH
+    ends   = isHigh ? spanEndL   : spanEndH
+    inside = false
+    if array.size(starts) > 0
+        for i = 0 to array.size(starts) - 1
+            if b > array.get(starts, i) and b < array.get(ends, i)
+                inside := true
+    inside
+
+f_makeLabel(bool isHigh, int nodeIdx, float price, int cnt) =>
+    off = array.get(nodeLblCnt, nodeIdx)
+    array.set(nodeLblCnt, nodeIdx, off + 1)
+    dir = isHigh ? 1 : -1
+    y = price + dir * nz(atrVal, syminfo.mintick * 8) * 0.35 * off
+    lbl = label.new(array.get(nodeBars, nodeIdx), y,
+         text = (isHigh ? "N" : "S") + str.tostring(cnt),
+         style = isHigh ? label.style_label_down : label.style_label_up,
+         color = color.new(color.gray, 100),
+         textcolor = color.white,
+         size = size.small)
+    array.push(Lref, lbl)
+    array.push(Lbar, array.get(nodeBars, nodeIdx))
+    array.push(Lnode, nodeIdx)
+    array.push(Lhigh, isHigh)
+    array.push(Lyellow, false)
+    array.push(Loff, off)
+    array.size(Lref) - 1
+
+f_setYellow(int recIdx, bool yellow) =>
+    lbl = array.get(Lref, recIdx)
+    if not na(lbl)
+        label.set_textcolor(lbl, yellow ? color.yellow : color.white)
+        array.set(Lyellow, recIdx, yellow)
+
+f_completeSeq(bool isHigh, int seqIdx) =>
+    n1Arr = isHigh ? seqN1H : seqN1L
+    n3Arr = isHigh ? seqN3H : seqN3L
+    l1Arr = isHigh ? seqL1H : seqL1L
+    l2Arr = isHigh ? seqL2H : seqL2L
+    l3Arr = isHigh ? seqL3H : seqL3L
+    startBar = array.get(nodeBars, array.get(n1Arr, seqIdx))
+    endBar   = array.get(nodeBars, array.get(n3Arr, seqIdx))
+    if isHigh
+        array.push(spanStartH, startBar)
+        array.push(spanEndH, endBar)
+    else
+        array.push(spanStartL, startBar)
+        array.push(spanEndL, endBar)
+    // own members: yellow unless formed inside a completed opposite span
+    recs = array.from(array.get(l1Arr, seqIdx), array.get(l2Arr, seqIdx), array.get(l3Arr, seqIdx))
+    for r in recs
+        f_setYellow(r, not f_insideOppSpan(isHigh, array.get(Lbar, r)))
+    // opposite-side labels inside this span must be white
+    if array.size(Lref) > 0
+        for i = 0 to array.size(Lref) - 1
+            if array.get(Lhigh, i) != isHigh and array.get(Lyellow, i) and array.get(Lbar, i) > startBar and array.get(Lbar, i) < endBar
+                f_setYellow(i, false)
+
+f_assignNumber(bool isHigh, int nodeIdx, float price) =>
+    cntArr = isHigh ? seqCntH : seqCntL
+    pxArr  = isHigh ? seqPxH  : seqPxL
+    n1Arr  = isHigh ? seqN1H  : seqN1L
+    n2Arr  = isHigh ? seqN2H  : seqN2L
+    n3Arr  = isHigh ? seqN3H  : seqN3L
+    l1Arr  = isHigh ? seqL1H  : seqL1L
+    l2Arr  = isHigh ? seqL2H  : seqL2L
+    l3Arr  = isHigh ? seqL3H  : seqL3L
+    joinSeq = array.new<int>()
+    joinCnt = array.new<int>()
+    compSeq = array.new<int>()
+    // pass 1: join every open sequence this node advances (newest first)
+    if array.size(cntArr) > 0
+        for i = array.size(cntArr) - 1 to 0
+            c = array.get(cntArr, i)
+            if c < 3 and (isHigh ? price > array.get(pxArr, i) + tol : price < array.get(pxArr, i) - tol)
+                newCnt = c + 1
+                array.set(cntArr, i, newCnt)
+                array.set(pxArr, i, price)
+                if newCnt == 2
+                    array.set(n2Arr, i, nodeIdx)
+                else
+                    array.set(n3Arr, i, nodeIdx)
+                    array.push(compSeq, i)
+                array.push(joinSeq, i)
+                array.push(joinCnt, newCnt)
+    // a new sequence starts at this node when it advances nothing, or when the
+    // previous same-side node completed a sequence (node after a 3 takes 1);
+    // its 1 label is created first so it sits nearest the candle
+    prevCompleted = nodeIdx >= 2 ? array.get(nodeCompleted, nodeIdx - 2) : false
+    if prevCompleted or array.size(joinSeq) == 0
+        array.push(cntArr, 1)
+        array.push(pxArr, price)
+        array.push(n1Arr, nodeIdx)
+        array.push(n2Arr, -1)
+        array.push(n3Arr, -1)
+        rec = f_makeLabel(isHigh, nodeIdx, price, 1)
+        array.push(l1Arr, rec)
+        array.push(l2Arr, -1)
+        array.push(l3Arr, -1)
+    // pass 2: labels for joins, newest sequence first
+    if array.size(joinSeq) > 0
+        for k = 0 to array.size(joinSeq) - 1
+            si = array.get(joinSeq, k)
+            nc = array.get(joinCnt, k)
+            rec = f_makeLabel(isHigh, nodeIdx, price, nc)
+            if nc == 2
+                array.set(l2Arr, si, rec)
+            else
+                array.set(l3Arr, si, rec)
+    // completions: colour + span (labels exist now)
+    if array.size(compSeq) > 0
+        for k = 0 to array.size(compSeq) - 1
+            f_completeSeq(isHigh, array.get(compSeq, k))
+    array.set(nodeCompleted, nodeIdx, array.size(compSeq) > 0)
+
+f_feedNode(int b, float price, bool isHigh) =>
+    // merge equal double top/bottom within tol with the node two steps back
+    n = array.size(nodeBars)
+    merged = false
+    if n >= 2 and array.get(nodeIsHigh, n - 1) != isHigh and array.get(nodeIsHigh, n - 2) == isHigh and math.abs(price - array.get(nodePrices, n - 2)) <= tol
+        if array.size(Lnode) > 0
+            for i = 0 to array.size(Lnode) - 1
+                if array.get(Lnode, i) == n - 1 and not na(array.get(Lref, i))
+                    label.delete(array.get(Lref, i))
+                    array.set(Lref, i, na)
+        // sequences containing the popped node: revert to previous count
+        // (kill only when the popped node is member 1)
+        popHigh = array.get(nodeIsHigh, n - 1)
+        pCnt = popHigh ? seqCntH : seqCntL
+        pPx  = popHigh ? seqPxH  : seqPxL
+        pN1  = popHigh ? seqN1H  : seqN1L
+        pN2  = popHigh ? seqN2H  : seqN2L
+        pN3  = popHigh ? seqN3H  : seqN3L
+        pL2  = popHigh ? seqL2H  : seqL2L
+        pL3  = popHigh ? seqL3H  : seqL3L
+        if array.size(pCnt) > 0
+            for i = 0 to array.size(pCnt) - 1
+                if array.get(pN1, i) == n - 1
+                    array.set(pCnt, i, 99)
+                else if array.get(pN2, i) == n - 1
+                    array.set(pCnt, i, 1)
+                    array.set(pPx, i, array.get(nodePrices, array.get(pN1, i)))
+                    array.set(pN2, i, -1)
+                    array.set(pL2, i, -1)
+                else if array.get(pN3, i) == n - 1
+                    array.set(pCnt, i, 2)
+                    array.set(pPx, i, array.get(nodePrices, array.get(pN2, i)))
+                    array.set(pN3, i, -1)
+                    array.set(pL3, i, -1)
+        array.pop(nodeBars)
+        array.pop(nodePrices)
+        array.pop(nodeIsHigh)
+        array.pop(nodeLblCnt)
+        array.pop(nodeCompleted)
+        merged := true
+    if not merged
+        if n > 0 and array.get(nodeIsHigh, n - 1) == isHigh
+            prevPx = array.get(nodePrices, n - 1)
+            moreExtreme = isHigh ? price > prevPx : price < prevPx
+            if moreExtreme and math.abs(price - prevPx) > tol
+                rCnt = isHigh ? seqCntH : seqCntL
+                rPx  = isHigh ? seqPxH  : seqPxL
+                rN1  = isHigh ? seqN1H  : seqN1L
+                rN2  = isHigh ? seqN2H  : seqN2L
+                rN3  = isHigh ? seqN3H  : seqN3L
+                rL1  = isHigh ? seqL1H  : seqL1L
+                rL2  = isHigh ? seqL2H  : seqL2L
+                rL3  = isHigh ? seqL3H  : seqL3L
+                // if this node completed a sequence, keep memberships (move labels only)
+                hasCompleted = false
+                if array.size(rCnt) > 0
+                    for i = 0 to array.size(rCnt) - 1
+                        if array.get(rCnt, i) == 3 and array.get(rN3, i) == n - 1
+                            hasCompleted := true
+                if hasCompleted
+                    array.set(nodeBars, n - 1, b)
+                    array.set(nodePrices, n - 1, price)
+                    if array.size(rCnt) > 0
+                        for i = 0 to array.size(rCnt) - 1
+                            lastMem = array.get(rCnt, i) == 1 ? array.get(rN1, i) : array.get(rCnt, i) == 2 ? array.get(rN2, i) : array.get(rN3, i)
+                            if lastMem == n - 1
+                                array.set(rPx, i, price)
+                    dir = isHigh ? 1 : -1
+                    if array.size(Lnode) > 0
+                        for i = 0 to array.size(Lnode) - 1
+                            if array.get(Lnode, i) == n - 1 and not na(array.get(Lref, i))
+                                label.set_x(array.get(Lref, i), b)
+                                label.set_y(array.get(Lref, i), price + dir * nz(atrVal, syminfo.mintick * 8) * 0.35 * array.get(Loff, i))
+                                array.set(Lbar, i, b)
+                else
+                    // remove this node's memberships, then re-number it at the new price
+                    if array.size(rCnt) > 0
+                        for i = 0 to array.size(rCnt) - 1
+                            c = array.get(rCnt, i)
+                            lastMem = c == 1 ? array.get(rN1, i) : c == 2 ? array.get(rN2, i) : -1
+                            if lastMem == n - 1
+                                rec = c == 1 ? array.get(rL1, i) : array.get(rL2, i)
+                                if rec >= 0 and not na(array.get(Lref, rec))
+                                    label.delete(array.get(Lref, rec))
+                                    array.set(Lref, rec, na)
+                                if c == 1
+                                    array.set(rCnt, i, 99)
+                                    array.set(rN1, i, -1)
+                                    array.set(rL1, i, -1)
+                                else
+                                    array.set(rCnt, i, 1)
+                                    array.set(rPx, i, array.get(nodePrices, array.get(rN1, i)))
+                                    array.set(rN2, i, -1)
+                                    array.set(rL2, i, -1)
+                    array.set(nodeBars, n - 1, b)
+                    array.set(nodePrices, n - 1, price)
+                    array.set(nodeLblCnt, n - 1, 0)
+                    f_assignNumber(isHigh, n - 1, price)
+        else
+            array.push(nodeBars, b)
+            array.push(nodePrices, price)
+            array.push(nodeIsHigh, isHigh)
+            array.push(nodeLblCnt, 0)
+            array.push(nodeCompleted, false)
+            f_assignNumber(isHigh, array.size(nodeBars) - 1, price)
+
+// --- main run logic ---------------------------------------------------------
+if runDir == 0
+    if haDir != 0
+        runDir := haDir
+        runStartBar := bar_index
+else if haDir == runDir or haDir == 0
+    oppCount := 0
+else
+    oppCount += 1
+    if oppCount >= haConfirm
+        runLen = (bar_index - oppCount + 1) - runStartBar
+        if runLen < swingStrength
+            oppCount := 0
+        else
+            isHigh = runDir > 0
+            best = runStartBar
+            for k = runStartBar to bar_index
+                if isHigh ? high[bar_index - k] > high[bar_index - best] : low[bar_index - k] < low[bar_index - best]
+                    best := k
+            px = isHigh ? high[bar_index - best] : low[bar_index - best]
+            runDir := -runDir
+            runStartBar := best
+            oppCount := 0
+            f_feedNode(best, px, isHigh)
+
+// node dots
+dotPx = showDots and array.size(nodeBars) > 0 and array.get(nodeBars, array.size(nodeBars) - 1) == bar_index ? array.get(nodePrices, array.size(nodePrices) - 1) : na
+plot(dotPx, style=plot.style_circles, color=color.blue, linewidth=3)
