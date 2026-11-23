@@ -156,7 +156,7 @@ f_draw86(bool isHigh, int seqIdx) =>
             lvl = isHigh ? p3 - 0.864 * leg : p3 + 0.864 * leg
             half = math.abs(lvl - tPx) - syminfo.mintick
             ln = line.new(b3, lvl, bar_index, lvl, color=color.orange, width=1)
-            bx = half > 0 ? box.new(b3, lvl + half, bar_index, lvl - half, border_color=color.new(color.orange, 70), bgcolor=color.new(color.orange, 88)) : na
+            bx = half > 0 ? box.new(b3, lvl + half, bar_index, lvl - half, border_color=color.new(color.orange, 85), bgcolor=color.new(color.orange, 94)) : na
             done = false
             if bar_index > b3
                 for k = b3 + 1 to bar_index
