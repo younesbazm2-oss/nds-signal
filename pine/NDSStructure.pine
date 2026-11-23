@@ -19,6 +19,7 @@ haConfirm     = input.int(1, "HA Confirm Bars", minval=1)
 tolTicks      = input.int(1, "Tolerance (ticks)", minval=0)
 showDots      = input.bool(true, "Show node dots")
 zoneMode      = input.string("Latest per side", "86.4% zones", options=["Latest per side", "All sequences", "Off"])
+maxBars       = input.int(4000, "Process last N bars", minval=500)
 
 tol = tolTicks * syminfo.mintick
 
@@ -28,6 +29,8 @@ var float haO = na
 haO := na(haO[1]) ? (open + close) / 2 : (haO[1] + haC[1]) / 2
 
 haDir = haC > haO ? 1 : haC < haO ? -1 : 0
+inWindow = bar_index >= last_bar_index - maxBars
+haDirEff = inWindow ? haDir : 0
 atrVal = ta.atr(14)
 
 // --- run tracking -----------------------------------------------------------
@@ -165,7 +168,7 @@ f_draw86(bool isHigh, int seqIdx) =>
             half = math.abs(lvl - tPx) - syminfo.mintick
             ln = line.new(b3, lvl, bar_index, lvl, color=color.orange, width=1)
             bx = half > 0 ? box.new(b3, lvl + half, bar_index, lvl - half, border_color=color.new(color.orange, 85), bgcolor=color.new(color.orange, 94)) : na
-            tLbl = label.new(array.get(nodeBars, tIdx), tPx + (isHigh ? -1 : 1) * nz(atrVal, syminfo.mintick * 8) * 0.35 * (array.get(nodeLblCnt, tIdx) + 1), text="T", style=isHigh ? label.style_label_up : label.style_label_down, color=color.new(color.gray, 100), textcolor=color.orange, size=size.small)
+            tLbl = bar_index - array.get(nodeBars, tIdx) <= 4900 ? label.new(array.get(nodeBars, tIdx), tPx + (isHigh ? -1 : 1) * nz(atrVal, syminfo.mintick * 8) * 0.35 * (array.get(nodeLblCnt, tIdx) + 1), text="T", style=isHigh ? label.style_label_up : label.style_label_down, color=color.new(color.gray, 100), textcolor=color.orange, size=size.small) : na
             done = false
             if bar_index > b3
                 for k = b3 + 1 to bar_index
@@ -358,10 +361,10 @@ f_feedNode(int b, float price, bool isHigh) =>
 
 // --- main run logic ---------------------------------------------------------
 if runDir == 0
-    if haDir != 0
-        runDir := haDir
+    if haDirEff != 0
+        runDir := haDirEff
         runStartBar := bar_index
-else if haDir == runDir or haDir == 0
+else if haDirEff == runDir or haDirEff == 0
     oppCount := 0
 else
     oppCount += 1
