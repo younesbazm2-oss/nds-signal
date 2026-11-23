@@ -18,7 +18,7 @@ swingStrength = input.int(7, "Swing Strength (min HA run length)", minval=1)
 haConfirm     = input.int(1, "HA Confirm Bars", minval=1)
 tolTicks      = input.int(1, "Tolerance (ticks)", minval=0)
 showDots      = input.bool(true, "Show node dots")
-show86        = input.bool(true, "Show 86.4% zones")
+zoneMode      = input.string("Latest per side", "86.4% zones", options=["Latest per side", "All sequences", "Off"])
 
 tol = tolTicks * syminfo.mintick
 
@@ -81,6 +81,7 @@ var array<box>   zBox   = array.new<box>()
 var array<float> zLevel = array.new<float>()
 var array<bool>  zHigh  = array.new<bool>()
 var array<bool>  zDone  = array.new<bool>()
+var array<int>   zBar   = array.new<int>()
 
 f_insideOppSpan(bool isHigh, int b) =>
     starts = isHigh ? spanStartL : spanStartH
@@ -142,7 +143,7 @@ f_completeSeq(bool isHigh, int seqIdx) =>
                 f_setYellow(i, false)
 
 f_draw86(bool isHigh, int seqIdx) =>
-    if show86
+    if zoneMode != "Off"
         n1Arr = isHigh ? seqN1H : seqN1L
         n3Arr = isHigh ? seqN3H : seqN3L
         n1Idx = array.get(n1Arr, seqIdx)
@@ -165,11 +166,19 @@ f_draw86(bool isHigh, int seqIdx) =>
                         if not na(bx)
                             box.set_right(bx, k)
                         done := true
+            if zoneMode == "Latest per side" and array.size(zLine) > 0
+                for i = 0 to array.size(zLine) - 1
+                    if array.get(zHigh, i) == isHigh and array.get(zBar, i) != b3 and not na(array.get(zLine, i))
+                        line.delete(array.get(zLine, i))
+                        if not na(array.get(zBox, i))
+                            box.delete(array.get(zBox, i))
+                        array.set(zDone, i, true)
             array.push(zLine, ln)
             array.push(zBox, bx)
             array.push(zLevel, lvl)
             array.push(zHigh, isHigh)
             array.push(zDone, done)
+            array.push(zBar, b3)
 
 f_assignNumber(bool isHigh, int nodeIdx, float price) =>
     cntArr = isHigh ? seqCntH : seqCntL
@@ -363,7 +372,7 @@ else
 // extend open 86.4% zones; stop when price reaches the level
 if array.size(zLine) > 0
     for i = 0 to array.size(zLine) - 1
-        if not array.get(zDone, i)
+        if not array.get(zDone, i) and not na(array.get(zLine, i))
             line.set_x2(array.get(zLine, i), bar_index)
             if not na(array.get(zBox, i))
                 box.set_right(array.get(zBox, i), bar_index)
