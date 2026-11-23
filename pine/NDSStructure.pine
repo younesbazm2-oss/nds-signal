@@ -82,6 +82,7 @@ var array<float> zLevel = array.new<float>()
 var array<bool>  zHigh  = array.new<bool>()
 var array<bool>  zDone  = array.new<bool>()
 var array<int>   zBar   = array.new<int>()
+var array<label> zTlbl  = array.new<label>()
 
 f_insideOppSpan(bool isHigh, int b) =>
     starts = isHigh ? spanStartL : spanStartH
@@ -150,6 +151,13 @@ f_draw86(bool isHigh, int seqIdx) =>
         n3Idx = array.get(n3Arr, seqIdx)
         if n1Idx >= 1 and n3Idx >= 0
             tPx = array.get(nodePrices, n1Idx - 1)
+            tIdx = n1Idx - 1
+            for j = n1Idx - 1 to n3Idx
+                if array.get(nodeIsHigh, j) != isHigh
+                    better = isHigh ? array.get(nodePrices, j) < tPx : array.get(nodePrices, j) > tPx
+                    if better
+                        tPx := array.get(nodePrices, j)
+                        tIdx := j
             p3 = array.get(nodePrices, n3Idx)
             b3 = array.get(nodeBars, n3Idx)
             leg = math.abs(p3 - tPx)
@@ -157,6 +165,7 @@ f_draw86(bool isHigh, int seqIdx) =>
             half = math.abs(lvl - tPx) - syminfo.mintick
             ln = line.new(b3, lvl, bar_index, lvl, color=color.orange, width=1)
             bx = half > 0 ? box.new(b3, lvl + half, bar_index, lvl - half, border_color=color.new(color.orange, 85), bgcolor=color.new(color.orange, 94)) : na
+            tLbl = label.new(array.get(nodeBars, tIdx), tPx + (isHigh ? -1 : 1) * nz(atrVal, syminfo.mintick * 8) * 0.35 * (array.get(nodeLblCnt, tIdx) + 1), text="T", style=isHigh ? label.style_label_up : label.style_label_down, color=color.new(color.gray, 100), textcolor=color.orange, size=size.small)
             done = false
             if bar_index > b3
                 for k = b3 + 1 to bar_index
@@ -172,6 +181,8 @@ f_draw86(bool isHigh, int seqIdx) =>
                         line.delete(array.get(zLine, i))
                         if not na(array.get(zBox, i))
                             box.delete(array.get(zBox, i))
+                        if not na(array.get(zTlbl, i))
+                            label.delete(array.get(zTlbl, i))
                         array.set(zDone, i, true)
             array.push(zLine, ln)
             array.push(zBox, bx)
@@ -179,6 +190,7 @@ f_draw86(bool isHigh, int seqIdx) =>
             array.push(zHigh, isHigh)
             array.push(zDone, done)
             array.push(zBar, b3)
+            array.push(zTlbl, tLbl)
 
 f_assignNumber(bool isHigh, int nodeIdx, float price) =>
     cntArr = isHigh ? seqCntH : seqCntL
