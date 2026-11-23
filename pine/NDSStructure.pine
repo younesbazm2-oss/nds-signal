@@ -12,12 +12,13 @@
 //  - Colour: labels white while forming; when a sequence completes, its 1-2-3 turn
 //    yellow, except nodes formed inside a completed opposite-side sequence
 //    (between its 1 and 3) which stay white.
-indicator("NDS Structure", overlay=true, max_labels_count=500)
+indicator("NDS Structure", overlay=true, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
 
 swingStrength = input.int(7, "Swing Strength (min HA run length)", minval=1)
 haConfirm     = input.int(1, "HA Confirm Bars", minval=1)
 tolTicks      = input.int(1, "Tolerance (ticks)", minval=0)
 showDots      = input.bool(true, "Show node dots")
+show86        = input.bool(true, "Show 86.4% zones")
 
 tol = tolTicks * syminfo.mintick
 
@@ -73,6 +74,13 @@ var array<int> spanStartH = array.new<int>()
 var array<int> spanEndH   = array.new<int>()
 var array<int> spanStartL = array.new<int>()
 var array<int> spanEndL   = array.new<int>()
+
+// 86.4% zones of completed sequences
+var array<line>  zLine  = array.new<line>()
+var array<box>   zBox   = array.new<box>()
+var array<float> zLevel = array.new<float>()
+var array<bool>  zHigh  = array.new<bool>()
+var array<bool>  zDone  = array.new<bool>()
 
 f_insideOppSpan(bool isHigh, int b) =>
     starts = isHigh ? spanStartL : spanStartH
@@ -133,6 +141,36 @@ f_completeSeq(bool isHigh, int seqIdx) =>
             if array.get(Lhigh, i) != isHigh and array.get(Lyellow, i) and array.get(Lbar, i) > startBar and array.get(Lbar, i) < endBar
                 f_setYellow(i, false)
 
+f_draw86(bool isHigh, int seqIdx) =>
+    if show86
+        n1Arr = isHigh ? seqN1H : seqN1L
+        n3Arr = isHigh ? seqN3H : seqN3L
+        n1Idx = array.get(n1Arr, seqIdx)
+        n3Idx = array.get(n3Arr, seqIdx)
+        if n1Idx >= 1 and n3Idx >= 0
+            tPx = array.get(nodePrices, n1Idx - 1)
+            p3 = array.get(nodePrices, n3Idx)
+            b3 = array.get(nodeBars, n3Idx)
+            leg = math.abs(p3 - tPx)
+            lvl = isHigh ? p3 - 0.864 * leg : p3 + 0.864 * leg
+            half = math.abs(lvl - tPx) - syminfo.mintick
+            ln = line.new(b3, lvl, bar_index, lvl, color=color.orange, width=1)
+            bx = half > 0 ? box.new(b3, lvl + half, bar_index, lvl - half, border_color=color.new(color.orange, 70), bgcolor=color.new(color.orange, 88)) : na
+            done = false
+            if bar_index > b3
+                for k = b3 + 1 to bar_index
+                    touched = isHigh ? low[bar_index - k] <= lvl : high[bar_index - k] >= lvl
+                    if touched and not done
+                        line.set_x2(ln, k)
+                        if not na(bx)
+                            box.set_right(bx, k)
+                        done := true
+            array.push(zLine, ln)
+            array.push(zBox, bx)
+            array.push(zLevel, lvl)
+            array.push(zHigh, isHigh)
+            array.push(zDone, done)
+
 f_assignNumber(bool isHigh, int nodeIdx, float price) =>
     cntArr = isHigh ? seqCntH : seqCntL
     pxArr  = isHigh ? seqPxH  : seqPxL
@@ -188,6 +226,7 @@ f_assignNumber(bool isHigh, int nodeIdx, float price) =>
     if array.size(compSeq) > 0
         for k = 0 to array.size(compSeq) - 1
             f_completeSeq(isHigh, array.get(compSeq, k))
+            f_draw86(isHigh, array.get(compSeq, k))
     array.set(nodeCompleted, nodeIdx, array.size(compSeq) > 0)
 
 f_feedNode(int b, float price, bool isHigh) =>
@@ -320,6 +359,16 @@ else
             runStartBar := best
             oppCount := 0
             f_feedNode(best, px, isHigh)
+
+// extend open 86.4% zones; stop when price reaches the level
+if array.size(zLine) > 0
+    for i = 0 to array.size(zLine) - 1
+        if not array.get(zDone, i)
+            line.set_x2(array.get(zLine, i), bar_index)
+            if not na(array.get(zBox, i))
+                box.set_right(array.get(zBox, i), bar_index)
+            if array.get(zHigh, i) ? low <= array.get(zLevel, i) : high >= array.get(zLevel, i)
+                array.set(zDone, i, true)
 
 // node dots
 dotPx = showDots and array.size(nodeBars) > 0 and array.get(nodeBars, array.size(nodeBars) - 1) == bar_index ? array.get(nodePrices, array.size(nodePrices) - 1) : na
